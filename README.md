@@ -61,6 +61,8 @@ In TestController, open **GPIB interfaces → Add**:
 
 Use `127.0.0.1` if TestController runs on the same machine as the bridge.
 
+![TestController Load devices — HP 3458A at GPIB address 22](picture3.png)
+
 ### HP 3458A Device File
 
 The file **`AgilentHP3458A.txt`** is the TestController device definition for
