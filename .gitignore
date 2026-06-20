@@ -1,0 +1,12 @@
+# PyInstaller build output
+gpib_bridge/
+dist/
+build/
+__pycache__/
+*.pyc
+
+# Compiled executable (distribute via Releases)
+*.exe
+
+# Claude Code session data
+.claude/

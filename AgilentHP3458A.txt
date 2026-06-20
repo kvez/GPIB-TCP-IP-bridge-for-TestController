@@ -1,0 +1,1739 @@
+﻿; TestController device configuration file for HP / Agilent / Keysight 3458A 8,5 digit Multimeter
+; Version 1.1
+; Date 27-10-2025
+; Written by Gertjan Miedema,  info at miedemageluid dot nl,  Username "Gertjan" at EEVblog.
+; Menu structure inspired on HP 34401A menu by WA
+
+
+; For use with TestController, software to control and log data: https://lygte-info.dk/project/TestControllerIntro%20UK.html
+; For use with a Prologix GPIB interface, or clone. (AR488!)
+; Tested with AR488 and official Prologix GPIB to USB adapters
+
+; Some tips:
+; - The HP / Agilent 3458A Multimeter is a very complex instrument, with very broad application areas.
+;   Most things for high accuracy measurements are implemented. Digitizing and measuring very fast are not.
+;
+; - First set up the meter for the measurement, then start measuring.
+;
+; - Commands for AutoCal are implemented. But AutoCal is remarked out in the menu's to prevent mishaps.
+;   These AutoCal commands can still be used from the command line and in scripts. For example: "acal 0" = ACAL ALL.
+;
+; - If you have a start-up problem, and use a AR488 with a slow booting Chinese Nano clone, un-remark this command:
+;     ; Start up delay, only needed for AR488 with slow booting Chinese Nano clones
+;     #resetDelay 3.5
+
+
+; Known issues:
+; - Range switching while measuring with long measuring intervals (like NPLC100, APER 1s) is best avoided.
+;   Sometimes a measurement answer is read as a range. A reading is lost, and the Setup Menu no longer correct.
+;   Closing and re-opening the Setup Menu will restore correct display of the ranges.
+;
+; - Using DELAY for Ohm measurements with Offset Compensation will lead to long measurement times:
+;   A delay of 2 sec will cause a measurement time of 8 seconds! -> So a log interval of 10 seconds will be necessary....
+
+
+
+
+; Meta definition for Agilent and HP 3458A DMM
+#metadef
+#name Agilent 3458A
+
+#metadef
+#name HP 3458A
+
+
+; Meta definition to also support Keysight 3458A DMM
+#metadef
+#idString Keysight,3458A
+#name Keysight 3458A
+#handle K3458A
+
+; Command to get a full id line and prevent connection to other devices
+#verifyDevice "Keysight3458A" model?
+
+
+
+#meta
+#idString HP,3458A
+#name Agilent/HP 3458A
+#handle HP3458A
+
+#port GPIB
+#driver Ascii
+#interfaceType BMM
+
+; Start up delay, only needed for AR488 with slow booting Chinese Nano clones
+; #resetDelay 3.5
+
+; The author statement is used for the listing in the About window.
+#author Gertjan Miedema
+
+
+
+#notes  Device configuration file for HP / Agilent 3458A.
+
+For info, tips and known issues, look in the header of this configuration file (AgilentHP3458A.txt)
+
+
+Configuration file version: 1.1
+
+
+
+
+
+
+;---------  GPIB settings  -------------
+; Used to change the standard LF end of line to CR or CRLF.
+; For eol a string is used, to write control character escapes must be used, use: /r for CR and /r/n for CRLF
+; #eol eoi
+
+; The #gpibReadEol defines how the device terminates its answers, the default uses eoi. 
+; Specifying "#gpibReadEol 10" would expect a LF character for terminating a answer.(13 = CR, 10 = LF)
+; #gpibReadEol eoi
+
+; add a small delay after each GPIB write, this can slow down the processing for old slow devices. (in ms)
+; #gpibWriteDelay 10
+
+; minimum time before trying to read a answer from a device in ms
+; #gpibWriteReadDelay 10
+
+; ++read_tmo_ms is controlled with #readingDelay
+; This specifies the timeout value, in SECONDS, that is used by the ++read command to wait for a character
+; to be transmitted while reading data from the GPIB bus. The timeout value may be set between 0 and 32 seconds.
+#readingDelay 10
+
+
+
+; ================= Original 3458A commands to SCPI/TestController commands translations  ======================
+
+; There must be a line for each of the original device commands that will be used, converting it to a similar SCPI command
+
+
+; command to init
+; END ALWAYS  EOI line set true when the last byte of each reading sent.
+; [CLR]       Do a "Selected Device Clear" function.
+; TARM HOLD   Trigger Arm Hold
+; INBUF ON    Enables the input buffer. Commands are stored, releasing the bus immediately
+; TRIG SYN    Triggers when the multimeter's output buffer is empty, memory is empty, and the controller requests data.
+#scpiCmd init tx END ALWAYS;INBUF ON;TRIG LINE;NDIG 8;TARM HOLD
+
+; Command to initialize and set variables
+#scpiCmd setVars none
+
+
+
+; Final commands to counter before breaking connection, used to restore local control
+; RESET    Set the multimeter to the power-on state without cycling power.
+; [CLR]    Do a "Selected Device Clear" function.
+; [LOC]    Go to Local, Set device in local control mode, i.e. the user interface on the device is active. 
+; LOCK OFF Enables the keyboard (normal operation)
+
+#scpiCmd reset tx TARM HOLD;RESET
+#scpiCmd goLocal tx [LOC]
+#scpiCmd clear tx [CLR]
+
+
+; TONE  Causes the multimeter to beep once.
+#scpiCmd beep tx TONE
+
+
+
+; -----  Instrument identification    -----
+
+; ID?       IDentity query. The multimeter responds to the ID? command by sending the string "HP3458A".
+; REV?      REVision query. First number: master processor firmware revision, second number: slave processor firmware revision.
+;
+; The ID request is the first command sent by TestController. Some init is necessary:
+;   TARM HOLD   Suspend readings by setting the trigger arm or trigger event to HOLD.
+;   INBUF ON    Enables the input buffer. Commands are stored, releasing the bus immediately
+;   END ALWAYS  EOI line set true when the last byte of each reading sent.
+ 
+; Recall the model number
+#scpiCmd model? txrx? END ALWAYS;INBUF ON;TRIG SYN;TARM HOLD;ID?
+:readmath: replace(value," ","");
+
+; Use these commands to get a full id line and prevent connection to other devices
+#scpiCmd getDeviceSW? txrx? REV?
+
+
+
+
+
+; ===========  Mode selection  ===========
+
+; DCV   1  Selects DC voltage measurements
+; ACV   2  Selects AC voltage measurements (the mode is set by the SETACV command)
+; ACDCV 3  Selects AC+DC voltage measurements (the mode is set by the SETACV command)
+; OHM   4  Selects 2-wire ohms measurements
+; OHMF  5  Selects 4-wire ohms measurements
+; DCI   6  Selects DC current measurements
+; ACI   7  Selects AC current measurements
+; ACDCI 8  Selects AC+DC current measurements
+
+; Recall Measurement Function
+#scpiCmd askMode? txrx? QFORMAT ALPHA;FUNC?
+:readmath: getElement(value,1,"[, ]");
+
+; Set Measurement function: Volt DC
+#scpiCmd voltDC tx FUNC DCV
+
+; Set Measurement function: Volt AC
+#scpiCmd voltAC tx FUNC ACV
+
+; Set Measurement function: Volt AC+DC
+#scpiCmd voltACDC tx FUNC ACDCV
+
+; Set Measurement function: Ohm 2-wire
+#scpiCmd ohm2W tx FUNC OHM
+
+; Set Measurement function: Ohm 4-wire
+#scpiCmd ohm4W tx FUNC OHMF
+
+; Set Measurement function: DC Current
+#scpiCmd currentDC tx FUNC DCI
+
+; Set Measurement function: AC Current
+#scpiCmd currentAC tx FUNC ACI
+
+; Set Measurement function: AC+DC Current
+#scpiCmd currentACDC tx FUNC ACDCI
+
+
+; ==========  Ranging  ===========
+
+; -----  Auto Range  -----
+
+; ARANGE OFF  0  Disables autorange algorithm
+; ARANGE ON   1  Enables autorange algorithm
+; ARANGE ONCE 2  Causes the multimeter to autorange once, then disables autoranging
+
+; Set  Auto Ranging
+#scpiCmd autoRange tx ARANGE (value)
+
+; Query Auto Ranging
+#scpiCmd autoRange? txrx? QFORMAT NORM;ARANGE?
+
+
+; -----  Set Manual Range  -----
+
+; RANGE [max._input][,%_resolution]
+;       To select a fixed range, you specify the max._input as the absolute value of the maximum input signal.
+
+; Set  Manual Range
+#scpiCmd range tx RANGE (value)
+
+; Query Manual Range
+#scpiCmd range? txrx? QFORMAT NORM;RANGE?
+
+
+
+; -----  Data read out  -----
+
+; TARM SGL   Trigger Arms once (upon receipt of TARM SGL) then becomes HOLD
+; NRDGS 1    Number of Readings per trigger event. 1 = AUTO = Initiates reading whenever the multimeter is not busy.
+
+; Prepare the meter to response to #askValues
+#scpiCmd prepareSample tx NRDGS 1
+
+; command to read current value or values.
+#scpiCmd read? txrx? TARM SGL
+
+
+
+; ==========  Control  ==========
+
+
+; -----  DCV Input Impedance  ------
+; FIXEDZ OFF 0  Fixed input impedance disabled. Input imp >10G on 0.1V,1V and 10V DCV Ranges
+; FIXEDZ ON  1  Fixed input impedance enabled. Input imp. 10M on all DCV ranges
+
+; Set DCV Input Impedance
+#scpiCmd fixedZ tx FIXEDZ (value)
+
+; Query DCV Input Impedance
+#scpiCmd fixedZ? txrx? QFORMAT NORM;FIXEDZ?
+
+
+
+; -----  Recall & Set NPLC  ------
+
+; Set NPLC
+#scpiCmd nplc tx NPLC (value)
+
+; Recall NPLC
+#scpiCmd nplc? txrx? QFORMAT NORM;NPLC?
+
+
+; -----  Recall & Set Aperture  ------
+; APER  APERture Specifies the A/D converter's integration time and overrides any previously 
+;       specified integration time or resolution. The valid range for aperture is 0 - 1s in increments of 100ns.
+
+; Set  Set Aperture
+#scpiCmd aper tx APER (value)
+
+; Recall Set Aperture
+#scpiCmd aper? txrx? QFORMAT NORM;APER?
+
+
+; -----  Recall & Set AutoZero  ------
+
+; Set AutoZero
+#scpiCmd autoZero tx AZERO (value)
+
+; Recall AutoZero
+#scpiCmd autoZero? txrx? QFORMAT NORM;AZERO?
+
+
+; -----  MATH (NULL, dB, dBm)  ------
+; MATH 0 = Math OFF
+; MATH 4 = Math dB
+; MATH 5 = Math dBm
+; MATH 9 = Math NULL
+
+; Set Math function
+#scpiCmd math tx MATH (value)
+
+; Recall Math function
+#scpiCmd math? txrx? QFORMAT NORM;MATH?
+:readmath: getElement(value,0,"[,]");
+
+
+; -----  Recall & Set Ohms Offset Compensation  ------
+
+; Set Ohms Offset Compensation
+#scpiCmd oComp tx OCOMP (value)
+
+; Recall Ohms Offset Compensation
+#scpiCmd oComp? txrx? QFORMAT NORM;OCOMP?
+
+
+; -----  Delay  ------
+; DELAY     Specify a time interval that is inserted between trigger event and first sample event.
+;           Delay time can range from 1E-7 (100 ns) to 6000 seconds.
+;           Specifying 0 for the delay sets the delay to its minimum possible value.
+; DELAY -1  Returns delay to the automatic (default) delay.
+
+; Set Delay
+#scpiCmd delay tx DELAY (value)
+
+; Query Delay
+#scpiCmd delay? txrx? QFORMAT NORM;DELAY?
+
+
+
+; -----  Recall & Set Number of Digits  ------
+; NDIG  Sets the number of display digits (3-8).
+;       More digits = more resolution, slower measurement.
+
+#scpiCmd ndigit tx NDIG (value)
+#scpiCmd ndigit? txrx? QFORMAT NORM;NDIG?
+
+
+; -----  Recall & Set Trigger Mode  ------
+; TRIG SYN   Triggers when controller requests data (normal GPIB mode)
+; TRIG LINE  Synchronizes to power line zero crossing (50/60Hz noise reduction)
+; TRIG AUTO  Continuous automatic triggering
+
+#scpiCmd trigMode tx TRIG (value)
+#scpiCmd trigMode? txrx? QFORMAT ALPHA;TRIG?
+:readmath: getElement(value,1,"[, ]");
+
+
+; -----  Select the RMS conversion technique  ------
+; SETACV ANA  1  Analog RMS conversion
+; SETACV RNDM 2  Random sampling conversion
+; SETACV SYNC 3  Synchronous sampling conversion
+
+; Set RMS conversion technique
+#scpiCmd setACV tx SETACV (value)
+
+; Query RMS conversion technique
+#scpiCmd setACV? txrx? QFORMAT NORM;SETACV?
+
+
+
+; -----  Recall 3458A internal temperature  ------
+
+; Recall  3458A internal temperature
+#scpiCmd temp? txrx? QFORMAT NORM;TEMP?
+
+
+; -----  AutoCal  ------
+; ACAL ALL  0  Performs the DCV, OHMS, and AC autocals
+; ACAL DCV  1  DC voltage gain and offset
+; ACAL AC   2  ACV flatness, gain, and offset
+; ACAL OHMS 4  OHMS gain and offset
+#scpiCmd acal tx QFORMAT NORM;ACAL (value)
+; Note: ACAL has no query form - write only command
+
+
+; =================================  End command conversion 3458A -> TC SCPI  ===========================
+
+
+
+
+; ----------------------- Data read out  ------------------
+
+; A list of possible column name with unit and formatter (SI, Time, Int, D0..D6)
+; code: #value name unit format {selector}
+
+#value Volt_DC DCV SI DCV
+#value Volt_AC ACV SI ACV
+#value Volt_ACDC ACDCV SI ACDCV
+#value Ohm_2W OHM SI OHM
+#value Ohm_4W OHMF SI OHMF
+#value Amp_DC DCI SI DCI
+#value Amp_AC ACI SI ACI
+#value Amp_ACDC ACDCI SI ACDCI
+
+
+
+; Prepare the meter to response to #askValues
+;#prepareSample
+
+; This is a single line command
+#askValues read?
+
+; #askValuesMathFormat 
+
+
+
+
+#askMode askMode?
+
+
+
+
+
+
+; ------------------  Initial commands &Final command  --------------
+
+
+; Command to get a full id line and prevent connection to other devices
+#verifyDevice "HP3458A" model?
+
+; Initial commands to meter when establishing connection
+#initCmd clear;reset;[4000];init;setVars
+
+; Final command to meter before breaking connection
+#finalCmd clear;reset;[4000];goLocal;[1000];
+
+
+
+
+; ========================== MENU'S  ================================
+
+
+; ==========  Mode (Function) menu  ==========
+
+#cmdModeLayout 2 4
+
+; code: #cmdMode modeLabel deviceModeString SCPI commands
+; math 0: Disable MATH operations after MODE change
+
+#cmdMode Volt_DC Volt_DC
+delay -1;voltDC;math 0
+
+#cmdMode Current_DC Amp_DC
+delay -1;currentDC;math 0
+
+#cmdMode Volt_AC Volt_AC
+delay -1;voltAC;math 0
+
+#cmdMode Current_AC Amp_AC
+delay -1;currentAC;math 0
+
+#cmdMode Volt_AC+DC Volt_ACDC
+delay -1;voltACDC;math 0
+
+#cmdMode Current_AC+DC Amp_ACDC
+delay -1;currentACDC;math 0
+
+#cmdMode Ohm_2W Ohm_2W
+delay -1;fixedZ 0;ohm2W;math 0
+
+#cmdMode Ohm_4W Ohm_4W
+delay -1;fixedZ 0;ohm4W;math 0
+
+
+
+
+; ========== Setup menu  ===========
+
+#cmdSetup info Active_Mode
+:read: askMode?
+:updatemodechange:
+
+
+; ----- DC Volt  -----
+#cmdSetup radio Range_Auto DCV
+:read: autoRange?
+:write: autoRange #;[50]
+:updatedelayed: 0.05
+:update: Range DCV
+:tip: <html>Manual ranging is faster because in auto range mode,<br>the multimeter samples the input signal before each reading
+Auto 1
+Manual 0
+; Once 2
+:updatemodechange:
+
+#cmdSetup radio Range DCV
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range_Auto DCV
+100mV 0.1
+1V 1
+10V 10
+100V 100
+1000V 1000
+:updatemodechange:
+
+#cmdSetup radio Imput_Impedance DCV
+:read: fixedZ?
+:write: fixedZ #
+:tip: Auto Input Imp. is >10G on 0.1V, 1V and 10V DCV Ranges, 10M on 100V and 1000V Ranges
+Auto,_>10G 0
+Fixed,_10M 1
+:updatemodechange:
+
+#cmdSetup separator Imput_Impedance DCV
+2 100 Raised
+
+
+#cmdSetup radio NPLC DCV
+:read: nplc?;
+:write: nplc #
+:update: Aperture DCV
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+1 1
+10 10
+20 20
+50 50
+100 100
+:updatemodechange:
+
+#cmdSetup number NPLC DCV
+:read: nplc?
+:format: D1
+:write: nplc
+:update: Aperture DCV
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+NPLC 0.5 1000
+:updatemodechange:
+
+#cmdSetup separator NPLC DCV 
+2 100 Raised
+
+
+#cmdSetup radio Aperture DCV
+:read: aper?;
+:write: aper #
+:update: NPLC DCV
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+10ms 10E-3
+20ms 20E-3
+50ms 50E-3
+200ms 200E-3
+1s 1
+:updatemodechange:
+
+#cmdSetup number Aperture DCV
+:read: aper?
+:format: D2
+:write: aper
+:update: NPLC DCV
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+sec 0.01 1
+:updatemodechange:
+
+#cmdSetup separator Aperture DCV
+2 100 Raised
+
+
+#cmdSetup radio AutoZero DCV
+:read: autoZero?;
+:write: autoZero #
+:tip: AutoZero function applies only to DC voltage, DC current, and resistance measurements.
+Off 0
+On 1
+Once 2
+:updatemodechange:
+
+
+#cmdSetup radio Math DCV
+:read: math?;
+:write: math #
+:tip: <html>Perform MATH function on measurements.<br>for NULL the first measurement is used to substract from following measurements.
+Off 0
+Null 9
+dB 4
+dBm 5
+:updatemodechange:
+
+
+#cmdSetup separator Delay DCV
+2 100 Raised
+
+
+#cmdSetup number Delay DCV
+:read: delay?
+:format: D2
+:write: delay
+:emptyvalue: -1
+:tip: <html>Specify a time interval that is inserted between the trigger event and the first sample event.<br>Valid range is 0 - 6 seconds. Specifying 0 sets the delay to its minimum possible value.<br>Set with empty input field returns delay to the automatic (default) delay.
+sec 0 6
+:updatemodechange:
+
+
+#cmdSetup separator NDIGIT DCV
+2 100 Raised
+
+#cmdSetup radio NDIGIT DCV
+:read: ndigit?
+:write: ndigit #
+:tip: Number of display digits. More digits = higher resolution, slower measurement.
+3 3
+4 4
+5 5
+6 6
+7 7
+8 8
+:updatemodechange:
+
+#cmdSetup separator Trigger_Mode DCV
+2 100 Raised
+
+#cmdSetup radio Trigger_Mode DCV
+:read: trigMode?
+:write: trigMode #
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+SYN SYN
+LINE LINE
+AUTO AUTO
+:updatemodechange:
+
+#cmdSetup separator AutoCal DCV
+2 100 Raised
+
+
+#cmdSetup combobox AutoCal DCV
+:buttontext: Run ACAL
+:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
+:write: acal #
+ALL  ALL
+DCV  DCV
+AC   AC
+OHMS OHMS
+
+
+#cmdSetup infoAsk 3458A_Temperature DCV
+:buttontext: Get TEMP
+:read: temp?
+degr.C
+
+
+
+; ----- AC Volt  -----
+#cmdSetup radio Range_Auto ACV
+:read: autoRange?
+:write: autoRange #;[50]
+:updatedelayed: 0.05
+:update: Range ACV
+:tip: <html>Manual ranging is faster because in auto range mode,<br>the multimeter samples the input signal before each reading
+Auto 1
+Manual 0
+:updatemodechange:
+
+#cmdSetup radio Range ACV
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range_Auto ACV
+10mV 10E-3
+100mV 0.1
+1V 1
+10V 10
+100V 100
+1000V 1E3
+:updatemodechange:
+
+#cmdSetup separator Range ACV
+2 100 Raised
+
+
+#cmdSetup radio True_RMS_sampling ACV
+:read: setACV?;
+:write: setACV #
+:update: NPLC_(only_for_Analog) ACV,Aperture_(only_for_Analog) ACV
+:tip: <html>Select the RMS conversion technique. Analog is default, Use Random for low level and noise.<br>Synchronous is most accurate, but signal must be repetitive.
+Analog 1
+Random 2
+Sync 3
+:updatemodechange:
+
+#cmdSetup separator True_RMS_sampling ACV
+2 100 Raised
+
+
+#cmdSetup radio NPLC_(only_for_Analog) ACV
+:enable: !ACV.True_RMS_sampling={long}0;
+:read: nplc?;
+:write: nplc #
+:update: Aperture_(only_for_Analog) ACV
+:tip: <html>NPLC is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time in terms of power line cycles.
+1 1
+10 10
+20 20
+50 50
+100 100
+:updatemodechange:
+
+#cmdSetup number NPLC_(only_for_Analog) ACV
+:enable: !ACV.True_RMS_sampling={long}0;
+:read: nplc?
+:format: D1
+:write: nplc
+:update: Aperture_(only_for_Analog) ACV
+:tip: <html>NPLC is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time in terms of power line cycles.
+NPLC 0.5 1000
+:updatemodechange:
+
+#cmdSetup separator NPLC_(only_for_Analog) ACV 
+2 100 Raised
+
+
+#cmdSetup radio Aperture_(only_for_Analog) ACV
+:enable: !ACV.True_RMS_sampling={long}0;
+:read: aper?;
+:write: aper #
+:update: NPLC_(only_for_Analog) ACV
+:tip: <html>Aperture is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+10ms 10E-3
+20ms 20E-3
+50ms 50E-3
+200ms 200E-3
+400ms 400E-3
+:updatemodechange:
+
+#cmdSetup number Aperture_(only_for_Analog) ACV
+:enable: !ACV.True_RMS_sampling={long}0;
+:read: aper?
+:format: D2
+:write: aper
+:update: NPLC_(only_for_Analog) ACV
+:tip: <html>Aperture is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+sec 0.01 1
+:updatemodechange:
+
+#cmdSetup separator Aperture_(only_for_Analog) ACV
+2 100 Raised
+
+
+#cmdSetup radio Math ACV
+:read: math?;
+:write: math #
+:tip: <html>Perform MATH function on measurements.<br>for NULL the first measurement is used to substract from following measurements.
+Off 0
+Null 9
+dB 4
+dBm 5
+:updatemodechange:
+
+
+#cmdSetup separator NDIGIT ACV
+2 100 Raised
+
+#cmdSetup radio NDIGIT ACV
+:read: ndigit?
+:write: ndigit #
+:tip: Number of display digits. More digits = higher resolution, slower measurement.
+3 3
+4 4
+5 5
+6 6
+7 7
+8 8
+:updatemodechange:
+
+#cmdSetup separator Trigger_Mode ACV
+2 100 Raised
+
+#cmdSetup radio Trigger_Mode ACV
+:read: trigMode?
+:write: trigMode #
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+SYN SYN
+LINE LINE
+AUTO AUTO
+:updatemodechange:
+
+#cmdSetup separator AutoCal ACV
+2 100 Raised
+
+
+#cmdSetup combobox AutoCal ACV
+:buttontext: Run ACAL
+:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
+:write: acal #
+ALL  ALL
+DCV  DCV
+AC   AC
+OHMS OHMS
+
+
+#cmdSetup infoAsk 3458A_Temperature ACV
+:buttontext: Get TEMP
+:read: temp?
+degr.C
+
+
+
+; ----- ACDC Volt  -----
+#cmdSetup radio Range_Auto ACDCV
+:read: autoRange?
+:write: autoRange #;[50]
+:updatedelayed: 0.05
+:update: Range ACDCV
+:tip: <html>Manual ranging is faster because in auto range mode,<br>the multimeter samples the input signal before each reading
+Auto 1
+Manual 0
+:updatemodechange:
+
+#cmdSetup radio Range ACDCV
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range_Auto ACDCV
+10mV 10E-3
+100mV 0.1
+1V 1
+10V 10
+100V 100
+1000V 1E3
+:updatemodechange:
+
+#cmdSetup separator Range ACDCV
+2 100 Raised
+
+
+#cmdSetup radio True_RMS_sampling ACDCV
+:read: setACV?;
+:write: setACV #
+:update: NPLC_(only_for_Analog) ACDCV,Aperture_(only_for_Analog) ACDCV
+:tip: <html>Select the RMS conversion technique. Analog is default, Use Random for low level and noise.<br>Synchronous is most accurate, but signal must be repetitive.
+Analog 1
+Random 2
+Sync 3
+:updatemodechange:
+
+#cmdSetup separator NPLC_(only_for_Analog) ACDCV
+2 100 Raised
+
+
+#cmdSetup radio NPLC_(only_for_Analog) ACDCV
+:enable: !ACDCV.True_RMS_sampling={long}0;
+:read: nplc?;
+:write: nplc #
+:update: Aperture_(only_for_Analog) ACDCV
+:tip: <html>NPLC is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time in terms of power line cycles.
+1 1
+10 10
+20 20
+50 50
+100 100
+:updatemodechange:
+
+#cmdSetup number NPLC_(only_for_Analog) ACDCV
+:enable: !ACDCV.True_RMS_sampling={long}0;
+:read: nplc?
+:format: D1
+:write: nplc
+:update: Aperture_(only_for_Analog) ACDCV
+:tip: <html>NPLC is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time in terms of power line cycles.
+NPLC 0.5 1000
+:updatemodechange:
+
+#cmdSetup separator NPLC_(only_for_Analog) ACDCV 
+2 100 Raised
+
+
+#cmdSetup radio Aperture_(only_for_Analog) ACDCV
+:enable: !ACDCV.True_RMS_sampling={long}0;
+:read: aper?;
+:write: aper #
+:update: NPLC_(only_for_Analog) ACDCV
+:tip: <html>Aperture is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+10ms 10E-3
+20ms 20E-3
+50ms 50E-3
+200ms 200E-3
+400ms 400E-3
+:updatemodechange:
+
+#cmdSetup number Aperture_(only_for_Analog) ACDCV
+:enable: !ACDCV.True_RMS_sampling={long}0;
+:read: aper?
+:format: D2
+:write: aper
+:update: NPLC_(only_for_Analog) ACDCV
+:tip: <html>Aperture is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+sec 0.01 1
+:updatemodechange:
+
+#cmdSetup separator Aperture_(only_for_Analog) ACDCV
+2 100 Raised
+
+
+#cmdSetup radio Math ACDCV
+:read: math?;
+:write: math #
+:tip: <html>Perform MATH function on measurements.<br>for NULL the first measurement is used to substract from following measurements.
+Off 0
+Null 9
+dB 4
+dBm 5
+:updatemodechange:
+
+
+#cmdSetup separator NDIGIT ACDCV
+2 100 Raised
+
+#cmdSetup radio NDIGIT ACDCV
+:read: ndigit?
+:write: ndigit #
+:tip: Number of display digits. More digits = higher resolution, slower measurement.
+3 3
+4 4
+5 5
+6 6
+7 7
+8 8
+:updatemodechange:
+
+#cmdSetup separator Trigger_Mode ACDCV
+2 100 Raised
+
+#cmdSetup radio Trigger_Mode ACDCV
+:read: trigMode?
+:write: trigMode #
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+SYN SYN
+LINE LINE
+AUTO AUTO
+:updatemodechange:
+
+#cmdSetup separator AutoCal ACDCV
+2 100 Raised
+
+
+#cmdSetup combobox AutoCal ACDCV
+:buttontext: Run ACAL
+:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
+:write: acal #
+ALL  ALL
+DCV  DCV
+AC   AC
+OHMS OHMS
+
+
+#cmdSetup infoAsk 3458A_Temperature ACDCV
+:buttontext: Get TEMP
+:read: temp?
+degr.C
+
+
+
+; ----- Ohm 2W  -----
+#cmdSetup radio Range_Auto OHM
+:read: autoRange?
+:write: autoRange #;[50]
+:updatedelayed: 0.05
+:update: _ OHM, Range OHM
+:tip: <html>Manual ranging is faster because in auto range mode,<br>the multimeter samples the input signal before each reading
+Auto 1
+Manual 0
+:updatemodechange:
+
+#cmdSetup radio Range OHM
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: _ OHM, Range_Auto OHM
+10Ohm 10
+100Ohm 100
+1kOhm 1000
+10kOhm 1E4
+100kOhm 1E5
+:updatemodechange:
+
+#cmdSetup radio _ OHM
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range OHM, Range_Auto OHM
+1MOhm 1E6
+10MOhm 1E7
+100MOhm 1E8
+1GOhm 1E9
+:updatemodechange:
+
+#cmdSetup separator _ OHM 
+2 100 Raised
+
+
+#cmdSetup radio NPLC OHM
+:read: nplc?;
+:write: nplc #
+:update: Aperture OHM
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+1 1
+10 10
+20 20
+50 50
+100 100
+:updatemodechange:
+
+#cmdSetup number NPLC OHM
+:read: nplc?
+:format: D1
+:write: nplc
+:update: Aperture OHM
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+NPLC 0.5 1000
+:updatemodechange:
+
+#cmdSetup separator NPLC OHM
+2 100 Raised
+
+
+#cmdSetup radio Aperture OHM
+:read: aper?;
+:write: aper #
+:update: NPLC OHM
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+10ms 10E-3
+20ms 20E-3
+50ms 50E-3
+200ms 200E-3
+1s 1
+:updatemodechange:
+
+#cmdSetup number Aperture OHM
+:read: aper?
+:format: D2
+:write: aper
+:update: NPLC OHM
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+sec 0.01 1
+:updatemodechange:
+
+#cmdSetup separator Aperture OHM
+2 100 Raised
+
+
+#cmdSetup radio AutoZero OHM
+:read: autoZero?;
+:write: autoZero #
+:tip: AutoZero function applies only to DC voltage, DC current, and resistance measurements.
+Off 0
+On 1
+Once 2
+:updatemodechange:
+
+
+#cmdSetup radio Math OHM
+:read: math?;
+:write: math #
+:tip: <html>Perform MATH function on measurements.<br>for NULL the first measurement is used to substract from following measurements.
+Off 0
+Null 9
+:updatemodechange:
+
+
+#cmdSetup separator Math OHM
+2 100 Raised
+
+
+#cmdSetup radio OffsetComp OHM
+:read: oComp?;
+:write: oComp #
+:tip: <html>OCOMP command enables or disables the offset compensated Ohms function.<br>Beware of dielectric absorption in the measurement cables! => Use additional delay
+Off 0
+On 1
+:updatemodechange:
+
+
+#cmdSetup number Delay OHM
+:read: delay?
+:format: D2
+:write: delay
+:emptyvalue: -1
+:tip: <html>Specify a time interval that is inserted between the trigger event and the first sample event.<br>Valid range is 0 - 2 seconds. Specifying 0 sets the delay to its minimum possible value.<br>Set with empty input field returns delay to the automatic (default) delay.
+sec 0 2
+:updatemodechange:
+
+
+#cmdSetup separator NDIGIT OHM
+2 100 Raised
+
+#cmdSetup radio NDIGIT OHM
+:read: ndigit?
+:write: ndigit #
+:tip: Number of display digits. More digits = higher resolution, slower measurement.
+3 3
+4 4
+5 5
+6 6
+7 7
+8 8
+:updatemodechange:
+
+#cmdSetup separator Trigger_Mode OHM
+2 100 Raised
+
+#cmdSetup radio Trigger_Mode OHM
+:read: trigMode?
+:write: trigMode #
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+SYN SYN
+LINE LINE
+AUTO AUTO
+:updatemodechange:
+
+#cmdSetup separator AutoCal OHM
+2 100 Raised
+
+
+#cmdSetup combobox AutoCal OHM
+:buttontext: Run ACAL
+:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
+:write: acal #
+ALL  ALL
+DCV  DCV
+AC   AC
+OHMS OHMS
+
+
+#cmdSetup infoAsk 3458A_Temperature OHM
+:buttontext: Get TEMP
+:read: temp?
+degr.C
+
+
+
+; ----- Ohm 4W  -----
+#cmdSetup radio Range_Auto OHMF
+:read: autoRange?
+:write: autoRange #;[50]
+:updatedelayed: 0.05
+:update: _ OHMF, Range OHMF
+:tip: <html>Manual ranging is faster because in auto range mode,<br>the multimeter samples the input signal before each reading
+Auto 1
+Manual 0
+:updatemodechange:
+
+#cmdSetup radio Range OHMF
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: _ OHMF, Range_Auto OHMF
+10Ohm 10
+100Ohm 100
+1kOhm 1000
+10kOhm 1E4
+100kOhm 1E5
+:updatemodechange:
+
+#cmdSetup radio _ OHMF
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range OHMF, Range_Auto OHMF
+1MOhm 1E6
+10MOhm 1E7
+100MOhm 1E8
+1GOhm 1E9
+:updatemodechange:
+
+#cmdSetup separator _ OHMF 
+2 100 Raised
+
+
+#cmdSetup radio NPLC OHMF
+:read: nplc?;
+:write: nplc #
+:update: Aperture OHMF
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+1 1
+10 10
+20 20
+50 50
+100 100
+:updatemodechange:
+
+#cmdSetup number NPLC OHMF
+:read: nplc?
+:format: D1
+:write: nplc
+:update: Aperture OHMF
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+NPLC 0.5 1000
+:updatemodechange:
+
+#cmdSetup separator NPLC OHMF
+2 100 Raised
+
+
+#cmdSetup radio Aperture OHMF
+:read: aper?;
+:write: aper #
+:update: NPLC OHMF
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+10ms 10E-3
+20ms 20E-3
+50ms 50E-3
+200ms 200E-3
+1s 1
+:updatemodechange:
+
+#cmdSetup number Aperture OHMF
+:read: aper?
+:format: D2
+:write: aper
+:update: NPLC OHMF
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+sec 0.01 1
+:updatemodechange:
+
+#cmdSetup separator Aperture OHMF
+2 100 Raised
+
+
+#cmdSetup radio AutoZero OHMF
+:read: autoZero?;
+:write: autoZero #
+:tip: AutoZero function applies only to DC voltage, DC current, and resistance measurements.
+Off 0
+On 1
+Once 2
+:updatemodechange:
+
+
+#cmdSetup radio Math OHMF
+:read: math?;
+:write: math #
+:tip: <html>Perform MATH function on measurements.<br>for NULL the first measurement is used to substract from following measurements.
+Off 0
+Null 9
+:updatemodechange:
+
+
+#cmdSetup separator Math OHMF
+2 100 Raised
+
+
+#cmdSetup radio OffsetComp OHMF
+:read: oComp?;
+:write: oComp #
+:tip: <html>OCOMP command enables or disables the offset compensated Ohms function.<br>Beware of dielectric absorption in the measurement cables! => Use additional delay
+Off 0
+On 1
+:updatemodechange:
+
+
+#cmdSetup number Delay OHMF
+:read: delay?
+:format: D2
+:write: delay
+:emptyvalue: -1
+:tip: <html>Specify a time interval that is inserted between the trigger event and the first sample event.<br>Valid range is 0 - 2 seconds. Specifying 0 sets the delay to its minimum possible value.<br>Set with empty input field returns delay to the automatic (default) delay.
+sec 0 2
+:updatemodechange:
+
+
+#cmdSetup separator NDIGIT OHMF
+2 100 Raised
+
+#cmdSetup radio NDIGIT OHMF
+:read: ndigit?
+:write: ndigit #
+:tip: Number of display digits. More digits = higher resolution, slower measurement.
+3 3
+4 4
+5 5
+6 6
+7 7
+8 8
+:updatemodechange:
+
+#cmdSetup separator Trigger_Mode OHMF
+2 100 Raised
+
+#cmdSetup radio Trigger_Mode OHMF
+:read: trigMode?
+:write: trigMode #
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+SYN SYN
+LINE LINE
+AUTO AUTO
+:updatemodechange:
+
+#cmdSetup separator AutoCal OHMF
+2 100 Raised
+
+
+#cmdSetup combobox AutoCal OHMF
+:buttontext: Run ACAL
+:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
+:write: acal #
+ALL  ALL
+DCV  DCV
+AC   AC
+OHMS OHMS
+
+
+#cmdSetup infoAsk 3458A_Temperature OHMF
+:buttontext: Get TEMP
+:read: temp?
+degr.C
+
+
+
+; ----- DC Current  -----
+#cmdSetup radio Range_Auto DCI
+:read: autoRange?
+:write: autoRange #;[50]
+:updatedelayed: 0.05
+:update: _ DCI, Range DCI
+:tip: <html>Manual ranging is faster because in auto range mode,<br>the multimeter samples the input signal before each reading
+Auto 1
+Manual 0
+:updatemodechange:
+
+#cmdSetup radio Range DCI
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range_Auto DCI, _ DCI
+0.1uA 0.1E-6
+1uA 1E-6
+10uA 10E-6
+100uA 100E-6
+:updatemodechange:
+
+#cmdSetup radio _ DCI
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range_Auto DCI, Range DCI
+1mA 1E-3
+10mA 10E-3
+100mA 100E-3
+1A 1
+:updatemodechange:
+
+#cmdSetup separator Range DCI
+2 100 Raised
+
+
+#cmdSetup radio NPLC DCI
+:read: nplc?;
+:write: nplc #
+:update: Aperture DCI
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+1 1
+10 10
+20 20
+50 50
+100 100
+:updatemodechange:
+
+#cmdSetup number NPLC DCI
+:read: nplc?
+:format: D1
+:write: nplc
+:update: Aperture DCI
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+NPLC 0.5 1000
+:updatemodechange:
+
+#cmdSetup separator NPLC DCI
+2 100 Raised
+
+
+#cmdSetup radio Aperture DCI
+:read: aper?;
+:write: aper #
+:update: NPLC DCI
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+10ms 10E-3
+20ms 20E-3
+50ms 50E-3
+200ms 200E-3
+1s 1
+:updatemodechange:
+
+#cmdSetup number Aperture DCI
+:read: aper?
+:format: D2
+:write: aper
+:update: NPLC DCI
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+sec 0.01 1
+:updatemodechange:
+
+#cmdSetup separator Aperture DCI
+2 100 Raised
+
+
+#cmdSetup radio AutoZero DCI
+:read: autoZero?;
+:write: autoZero #
+:tip: AutoZero function applies only to DC voltage, DC current, and resistance measurements.
+Off 0
+On 1
+Once 2
+:updatemodechange:
+
+
+#cmdSetup radio Math DCI
+:read: math?;
+:write: math #
+:tip: <html>Perform MATH function on measurements.<br>for NULL the first measurement is used to substract from following measurements.
+Off 0
+Null 9
+dB 4
+:updatemodechange:
+
+
+#cmdSetup separator NDIGIT DCI
+2 100 Raised
+
+#cmdSetup radio NDIGIT DCI
+:read: ndigit?
+:write: ndigit #
+:tip: Number of display digits. More digits = higher resolution, slower measurement.
+3 3
+4 4
+5 5
+6 6
+7 7
+8 8
+:updatemodechange:
+
+#cmdSetup separator Trigger_Mode DCI
+2 100 Raised
+
+#cmdSetup radio Trigger_Mode DCI
+:read: trigMode?
+:write: trigMode #
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+SYN SYN
+LINE LINE
+AUTO AUTO
+:updatemodechange:
+
+#cmdSetup separator AutoCal DCI
+2 100 Raised
+
+
+#cmdSetup combobox AutoCal DCI
+:buttontext: Run ACAL
+:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
+:write: acal #
+ALL  ALL
+DCV  DCV
+AC   AC
+OHMS OHMS
+
+
+#cmdSetup infoAsk 3458A_Temperature DCI
+:buttontext: Get TEMP
+:read: temp?
+degr.C
+
+
+
+; ----- AC Current  -----
+#cmdSetup radio Range_Auto ACI
+:read: autoRange?
+:write: autoRange #;[50]
+:updatedelayed: 0.05
+:update: Range ACI
+:tip: <html>Manual ranging is faster because in auto range mode,<br>the multimeter samples the input signal before each reading
+Auto 1
+Manual 0
+:updatemodechange:
+
+#cmdSetup radio Range ACI
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range_Auto ACI
+100uA 100E-6
+1mA 1E-3
+10mA 10E-3
+100mA 100E-3
+1A 1
+:updatemodechange:
+
+#cmdSetup separator Range ACI
+2 100 Raised
+
+
+#cmdSetup radio NPLC ACI
+:read: nplc?;
+:write: nplc #
+:update: Aperture ACI
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+1 1
+10 10
+20 20
+50 50
+100 100
+:updatemodechange:
+
+#cmdSetup number NPLC ACI
+:read: nplc?
+:format: D1
+:write: nplc
+:update: Aperture ACI
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+NPLC 0.5 1000
+:updatemodechange:
+
+#cmdSetup separator NPLC ACI
+2 100 Raised
+
+
+#cmdSetup radio Aperture ACI
+:read: aper?;
+:write: aper #
+:update: NPLC ACI
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+10ms 10E-3
+20ms 20E-3
+50ms 50E-3
+200ms 200E-3
+400ms 400E-3
+:updatemodechange:
+
+#cmdSetup number Aperture ACI
+:read: aper?
+:format: D2
+:write: aper
+:update: NPLC ACI
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+sec 0.01 1
+:updatemodechange:
+
+#cmdSetup separator Aperture ACI
+2 100 Raised
+
+
+#cmdSetup radio Math ACI
+:read: math?;
+:write: math #
+:tip: <html>Perform MATH function on measurements.<br>for NULL the first measurement is used to substract from following measurements.
+Off 0
+Null 9
+dB 4
+:updatemodechange:
+
+
+#cmdSetup separator NDIGIT ACI
+2 100 Raised
+
+#cmdSetup radio NDIGIT ACI
+:read: ndigit?
+:write: ndigit #
+:tip: Number of display digits. More digits = higher resolution, slower measurement.
+3 3
+4 4
+5 5
+6 6
+7 7
+8 8
+:updatemodechange:
+
+#cmdSetup separator Trigger_Mode ACI
+2 100 Raised
+
+#cmdSetup radio Trigger_Mode ACI
+:read: trigMode?
+:write: trigMode #
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+SYN SYN
+LINE LINE
+AUTO AUTO
+:updatemodechange:
+
+#cmdSetup separator AutoCal ACI
+2 100 Raised
+
+
+#cmdSetup combobox AutoCal ACI
+:buttontext: Run ACAL
+:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
+:write: acal #
+ALL  ALL
+DCV  DCV
+AC   AC
+OHMS OHMS
+
+
+#cmdSetup infoAsk 3458A_Temperature ACI
+:buttontext: Get TEMP
+:read: temp?
+degr.C
+
+
+
+; ----- ACDC Current  -----
+#cmdSetup radio Range_Auto ACDCI
+:read: autoRange?
+:write: autoRange #;[50]
+:updatedelayed: 0.05
+:update: Range ACDCI
+:tip: <html>Manual ranging is faster because in auto range mode,<br>the multimeter samples the input signal before each reading
+Auto 1
+Manual 0
+:updatemodechange:
+
+#cmdSetup radio Range ACDCI
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range_Auto ACDCI
+100uA 100E-6
+1mA 1E-3
+10mA 10E-3
+100mA 100E-3
+1A 1
+:updatemodechange:
+
+#cmdSetup separator Range ACDCI
+2 100 Raised
+
+
+#cmdSetup radio NPLC ACDCI
+:read: nplc?;
+:write: nplc #
+:update: Aperture ACDCI
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+1 1
+10 10
+20 20
+50 50
+100 100
+:updatemodechange:
+
+#cmdSetup number NPLC ACDCI
+:read: nplc?
+:format: D1
+:write: nplc
+:update: Aperture ACDCI
+:tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
+NPLC 0.5 1000
+:updatemodechange:
+
+#cmdSetup separator NPLC ACDCI
+2 100 Raised
+
+
+#cmdSetup radio Aperture ACDCI
+:read: aper?;
+:write: aper #
+:update: NPLC ACDCI
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+10ms 10E-3
+20ms 20E-3
+50ms 50E-3
+200ms 200E-3
+400ms 400E-3
+:updatemodechange:
+
+#cmdSetup number Aperture ACDCI
+:read: aper?
+:format: D2
+:write: aper
+:update: NPLC ACDCI
+:tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
+sec 0.01 1
+:updatemodechange:
+
+#cmdSetup separator Aperture ACDCI
+2 100 Raised
+
+
+#cmdSetup radio Math ACDCI
+:read: math?;
+:write: math #
+:tip: <html>Perform MATH function on measurements.<br>for NULL the first measurement is used to substract from following measurements.
+Off 0
+Null 9
+dB 4
+:updatemodechange:
+
+
+#cmdSetup separator NDIGIT ACDCI
+2 100 Raised
+
+#cmdSetup radio NDIGIT ACDCI
+:read: ndigit?
+:write: ndigit #
+:tip: Number of display digits. More digits = higher resolution, slower measurement.
+3 3
+4 4
+5 5
+6 6
+7 7
+8 8
+:updatemodechange:
+
+#cmdSetup separator Trigger_Mode ACDCI
+2 100 Raised
+
+#cmdSetup radio Trigger_Mode ACDCI
+:read: trigMode?
+:write: trigMode #
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+SYN SYN
+LINE LINE
+AUTO AUTO
+:updatemodechange:
+
+#cmdSetup separator AutoCal ACDCI
+2 100 Raised
+
+
+#cmdSetup combobox AutoCal ACDCI
+:buttontext: Run ACAL
+:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
+:write: acal #
+ALL  ALL
+DCV  DCV
+AC   AC
+OHMS OHMS
+
+
+#cmdSetup infoAsk 3458A_Temperature ACDCI
+:buttontext: Get TEMP
+:read: temp?
+degr.C
+
+
+;  ------  Mode menu selector  ------
+#cmdSetup selector Mode_settings 
+:read: askMode?
+:updatemodechange:
+DCV DCV.
+ACV ACV.
+ACDCV ACDCV.
+OHM OHM.
+OHMF OHMF.
+DCI DCI.
+ACI ACI.
+ACDCI ACDCI.
+
