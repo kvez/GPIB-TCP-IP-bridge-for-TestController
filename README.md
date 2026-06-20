@@ -13,6 +13,8 @@ and the HP / Agilent / Keysight 3458A 8.5-digit multimeter.
 - System tray icon and scrollable log window (windowed app, no console)
 - Extended commands: `++hp3458_init`, `++scan`, `MREAD`
 
+![GPIB Bridge startup — HP 3458A detected at GPIB address 22](picture.png)
+
 ## Requirements
 
 **Hardware**
@@ -92,6 +94,8 @@ The maximum `++read` timeout of AR488 / Prologix adapters is approximately **32 
   for the current measurement cycle to complete first.
 
 See **`AgilentHP3458A_NPLC_logging_notes.md`** for the full analysis.
+
+![TestController logging — HP3458A Volt DC values](picture2.png)
 
 ## Prologix Commands
 
