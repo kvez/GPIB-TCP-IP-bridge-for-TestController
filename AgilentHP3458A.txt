@@ -30,6 +30,32 @@
 ;
 ; - Using DELAY for Ohm measurements with Offset Compensation will lead to long measurement times:
 ;   A delay of 2 sec will cause a measurement time of 8 seconds! -> So a log interval of 10 seconds will be necessary....
+;
+; - FREEZE AT LOGGING START (high NPLC):
+;   When logging starts, TestController reads back all settings from the Setup panel (range, NPLC, AZERO, etc.)
+;   using the ':read:' queries defined in the #cmdSetup sections. Each such query sends a command to the meter
+;   and waits for a response. If the meter is currently integrating (e.g. NPLC 1000 = 20 s at 50 Hz,
+;   or ~40 s with AZERO ON), TC cannot receive the answer until the current measurement cycle finishes.
+;   During this time TC appears to freeze -- it is not crashed, it is waiting.
+;
+;   The GPIB read timeout is controlled by #readingDelay (currently 28 s). If the meter does not respond
+;   within this time (e.g. NPLC 1000 + AZERO ON: ~40 s integration), the read will time out and the
+;   setting readback will fail or show a stale value. With AR488 / Prologix adapters the maximum ++read
+;   timeout ceiling is ~32 s, so NPLC values that result in longer integration times cannot be reliably
+;   used in logging mode.
+;
+;   Integration time reference (50 Hz mains):
+;     NPLC 1    =  20 ms    ->  with AZERO ON ~  40 ms   (no problem)
+;     NPLC 10   = 200 ms    ->  with AZERO ON ~ 400 ms   (no problem)
+;     NPLC 100  =   2 s     ->  with AZERO ON ~   4 s    (fine, well within timeout)
+;     NPLC 1000 =  20 s     ->  with AZERO ON ~  40 s    (EXCEEDS #readingDelay 28 s -> timeout risk)
+;
+;   Recommendations:
+;     - Keep NPLC <= 100 for reliable logging (2 s integration, 4 s with AZERO ON).
+;     - If NPLC 1000 is needed for maximum accuracy, use AZERO OFF to halve the integration time (~20 s),
+;       and consider increasing #readingDelay toward the adapter maximum (~30 s).
+;     - Do not start the log immediately after changing NPLC to a high value; wait for any ongoing
+;       measurement to complete before TC sends readback queries.
 
 
 
@@ -49,7 +75,7 @@
 #handle K3458A
 
 ; Command to get a full id line and prevent connection to other devices
-#verifyDevice "Keysight3458A" model?
+#verifyDevice "HP3458A" model?
 
 
 
@@ -60,7 +86,8 @@
 
 #port GPIB
 #driver Ascii
-#interfaceType BMM
+#interfaceType DMM BMM
+#interface readValue 0
 
 ; Start up delay, only needed for AR488 with slow booting Chinese Nano clones
 ; #resetDelay 3.5
@@ -100,7 +127,8 @@ Configuration file version: 1.1
 ; ++read_tmo_ms is controlled with #readingDelay
 ; This specifies the timeout value, in SECONDS, that is used by the ++read command to wait for a character
 ; to be transmitted while reading data from the GPIB bus. The timeout value may be set between 0 and 32 seconds.
-#readingDelay 10
+#readingDelay 28
+#modeChangeDelay 10
 
 
 
@@ -115,7 +143,7 @@ Configuration file version: 1.1
 ; TARM HOLD   Trigger Arm Hold
 ; INBUF ON    Enables the input buffer. Commands are stored, releasing the bus immediately
 ; TRIG SYN    Triggers when the multimeter's output buffer is empty, memory is empty, and the controller requests data.
-#scpiCmd init tx END ALWAYS;INBUF ON;TRIG LINE;NDIG 8;TARM HOLD
+#scpiCmd init tx END ALWAYS;INBUF ON;TRIG SYN;NDIG 8;TARM HOLD
 
 ; Command to initialize and set variables
 #scpiCmd setVars none
@@ -129,6 +157,7 @@ Configuration file version: 1.1
 ; LOCK OFF Enables the keyboard (normal operation)
 
 #scpiCmd reset tx TARM HOLD;RESET
+#scpiCmd tarmHold tx TARM HOLD
 #scpiCmd goLocal tx [LOC]
 #scpiCmd clear tx [CLR]
 
@@ -377,14 +406,14 @@ Configuration file version: 1.1
 ; A list of possible column name with unit and formatter (SI, Time, Int, D0..D6)
 ; code: #value name unit format {selector}
 
-#value Volt_DC DCV SI DCV
-#value Volt_AC ACV SI ACV
-#value Volt_ACDC ACDCV SI ACDCV
-#value Ohm_2W OHM SI OHM
-#value Ohm_4W OHMF SI OHMF
-#value Amp_DC DCI SI DCI
-#value Amp_AC ACI SI ACI
-#value Amp_ACDC ACDCI SI ACDCI
+#value Volt_DC   V   SI DCV
+#value Volt_AC   V   SI ACV
+#value Volt_ACDC V   SI ACDCV
+#value Ohm_2W    ohm SI OHM
+#value Ohm_4W    ohm SI OHMF
+#value Amp_DC    A   SI DCI
+#value Amp_AC    A   SI ACI
+#value Amp_ACDC  A   SI ACDCI
 
 
 
@@ -416,7 +445,7 @@ Configuration file version: 1.1
 #initCmd clear;reset;[4000];init;setVars
 
 ; Final command to meter before breaking connection
-#finalCmd clear;reset;[4000];goLocal;[1000];
+#finalCmd clear;tarmHold;goLocal;[1000];
 
 
 
@@ -431,28 +460,28 @@ Configuration file version: 1.1
 ; code: #cmdMode modeLabel deviceModeString SCPI commands
 ; math 0: Disable MATH operations after MODE change
 
-#cmdMode Volt_DC Volt_DC
+#cmdMode DCV DCV
 delay -1;voltDC;math 0
 
-#cmdMode Current_DC Amp_DC
+#cmdMode DCI DCI
 delay -1;currentDC;math 0
 
-#cmdMode Volt_AC Volt_AC
+#cmdMode ACV ACV
 delay -1;voltAC;math 0
 
-#cmdMode Current_AC Amp_AC
+#cmdMode ACI ACI
 delay -1;currentAC;math 0
 
-#cmdMode Volt_AC+DC Volt_ACDC
+#cmdMode ACDCV ACDCV
 delay -1;voltACDC;math 0
 
-#cmdMode Current_AC+DC Amp_ACDC
+#cmdMode ACDCI ACDCI
 delay -1;currentACDC;math 0
 
-#cmdMode Ohm_2W Ohm_2W
+#cmdMode OHM OHM
 delay -1;fixedZ 0;ohm2W;math 0
 
-#cmdMode Ohm_4W Ohm_4W
+#cmdMode OHMF OHMF
 delay -1;fixedZ 0;ohm4W;math 0
 
 
@@ -489,7 +518,7 @@ Manual 0
 1000V 1000
 :updatemodechange:
 
-#cmdSetup radio Imput_Impedance DCV
+#cmdSetup radio Input_Impedance DCV
 :read: fixedZ?
 :write: fixedZ #
 :tip: Auto Input Imp. is >10G on 0.1V, 1V and 10V DCV Ranges, 10M on 100V and 1000V Ranges
@@ -497,7 +526,7 @@ Auto,_>10G 0
 Fixed,_10M 1
 :updatemodechange:
 
-#cmdSetup separator Imput_Impedance DCV
+#cmdSetup separator Input_Impedance DCV
 2 100 Raised
 
 
@@ -519,7 +548,7 @@ Fixed,_10M 1
 :write: nplc
 :update: Aperture DCV
 :tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
-NPLC 0.5 1000
+NPLC 0 1000
 :updatemodechange:
 
 #cmdSetup separator NPLC DCV 
@@ -544,7 +573,7 @@ NPLC 0.5 1000
 :write: aper
 :update: NPLC DCV
 :tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
-sec 0.01 1
+sec 0.0000005 1
 :updatemodechange:
 
 #cmdSetup separator Aperture DCV
@@ -581,8 +610,8 @@ dBm 5
 :format: D2
 :write: delay
 :emptyvalue: -1
-:tip: <html>Specify a time interval that is inserted between the trigger event and the first sample event.<br>Valid range is 0 - 6 seconds. Specifying 0 sets the delay to its minimum possible value.<br>Set with empty input field returns delay to the automatic (default) delay.
-sec 0 6
+:tip: <html>Specify a time interval that is inserted between the trigger event and the first sample event.<br>Valid range is 0 - 6000 seconds. Specifying 0 sets the delay to its minimum possible value.<br>Set with empty input field returns delay to the automatic (default) delay.
+sec 0 6000
 :updatemodechange:
 
 
@@ -607,24 +636,13 @@ sec 0 6
 #cmdSetup radio Trigger_Mode DCV
 :read: trigMode?
 :write: trigMode #
-:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering<br>EXT: external trigger input (BNC, rear panel)
 SYN SYN
 LINE LINE
 AUTO AUTO
+EXT EXT
 :updatemodechange:
 
-#cmdSetup separator AutoCal DCV
-2 100 Raised
-
-
-#cmdSetup combobox AutoCal DCV
-:buttontext: Run ACAL
-:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
-:write: acal #
-ALL  ALL
-DCV  DCV
-AC   AC
-OHMS OHMS
 
 
 #cmdSetup infoAsk 3458A_Temperature DCV
@@ -696,7 +714,7 @@ Sync 3
 :write: nplc
 :update: Aperture_(only_for_Analog) ACV
 :tip: <html>NPLC is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time in terms of power line cycles.
-NPLC 0.5 1000
+NPLC 0 1000
 :updatemodechange:
 
 #cmdSetup separator NPLC_(only_for_Analog) ACV 
@@ -723,7 +741,7 @@ NPLC 0.5 1000
 :write: aper
 :update: NPLC_(only_for_Analog) ACV
 :tip: <html>Aperture is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
-sec 0.01 1
+sec 0.0000005 1
 :updatemodechange:
 
 #cmdSetup separator Aperture_(only_for_Analog) ACV
@@ -762,24 +780,13 @@ dBm 5
 #cmdSetup radio Trigger_Mode ACV
 :read: trigMode?
 :write: trigMode #
-:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering<br>EXT: external trigger input (BNC, rear panel)
 SYN SYN
 LINE LINE
 AUTO AUTO
+EXT EXT
 :updatemodechange:
 
-#cmdSetup separator AutoCal ACV
-2 100 Raised
-
-
-#cmdSetup combobox AutoCal ACV
-:buttontext: Run ACAL
-:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
-:write: acal #
-ALL  ALL
-DCV  DCV
-AC   AC
-OHMS OHMS
 
 
 #cmdSetup infoAsk 3458A_Temperature ACV
@@ -851,7 +858,7 @@ Sync 3
 :write: nplc
 :update: Aperture_(only_for_Analog) ACDCV
 :tip: <html>NPLC is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time in terms of power line cycles.
-NPLC 0.5 1000
+NPLC 0 1000
 :updatemodechange:
 
 #cmdSetup separator NPLC_(only_for_Analog) ACDCV 
@@ -878,7 +885,7 @@ NPLC 0.5 1000
 :write: aper
 :update: NPLC_(only_for_Analog) ACDCV
 :tip: <html>Aperture is only used in Analog conversion mode.<br>Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
-sec 0.01 1
+sec 0.0000005 1
 :updatemodechange:
 
 #cmdSetup separator Aperture_(only_for_Analog) ACDCV
@@ -917,24 +924,13 @@ dBm 5
 #cmdSetup radio Trigger_Mode ACDCV
 :read: trigMode?
 :write: trigMode #
-:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering<br>EXT: external trigger input (BNC, rear panel)
 SYN SYN
 LINE LINE
 AUTO AUTO
+EXT EXT
 :updatemodechange:
 
-#cmdSetup separator AutoCal ACDCV
-2 100 Raised
-
-
-#cmdSetup combobox AutoCal ACDCV
-:buttontext: Run ACAL
-:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
-:write: acal #
-ALL  ALL
-DCV  DCV
-AC   AC
-OHMS OHMS
 
 
 #cmdSetup infoAsk 3458A_Temperature ACDCV
@@ -1000,7 +996,7 @@ Manual 0
 :write: nplc
 :update: Aperture OHM
 :tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
-NPLC 0.5 1000
+NPLC 0 1000
 :updatemodechange:
 
 #cmdSetup separator NPLC OHM
@@ -1025,7 +1021,7 @@ NPLC 0.5 1000
 :write: aper
 :update: NPLC OHM
 :tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
-sec 0.01 1
+sec 0.0000005 1
 :updatemodechange:
 
 #cmdSetup separator Aperture OHM
@@ -1069,8 +1065,8 @@ On 1
 :format: D2
 :write: delay
 :emptyvalue: -1
-:tip: <html>Specify a time interval that is inserted between the trigger event and the first sample event.<br>Valid range is 0 - 2 seconds. Specifying 0 sets the delay to its minimum possible value.<br>Set with empty input field returns delay to the automatic (default) delay.
-sec 0 2
+:tip: <html>Specify a time interval that is inserted between the trigger event and the first sample event.<br>Valid range is 0 - 6000 seconds. Specifying 0 sets the delay to its minimum possible value.<br>Set with empty input field returns delay to the automatic (default) delay.
+sec 0 6000
 :updatemodechange:
 
 
@@ -1095,24 +1091,13 @@ sec 0 2
 #cmdSetup radio Trigger_Mode OHM
 :read: trigMode?
 :write: trigMode #
-:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering<br>EXT: external trigger input (BNC, rear panel)
 SYN SYN
 LINE LINE
 AUTO AUTO
+EXT EXT
 :updatemodechange:
 
-#cmdSetup separator AutoCal OHM
-2 100 Raised
-
-
-#cmdSetup combobox AutoCal OHM
-:buttontext: Run ACAL
-:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
-:write: acal #
-ALL  ALL
-DCV  DCV
-AC   AC
-OHMS OHMS
 
 
 #cmdSetup infoAsk 3458A_Temperature OHM
@@ -1178,7 +1163,7 @@ Manual 0
 :write: nplc
 :update: Aperture OHMF
 :tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
-NPLC 0.5 1000
+NPLC 0 1000
 :updatemodechange:
 
 #cmdSetup separator NPLC OHMF
@@ -1203,7 +1188,7 @@ NPLC 0.5 1000
 :write: aper
 :update: NPLC OHMF
 :tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
-sec 0.01 1
+sec 0.0000005 1
 :updatemodechange:
 
 #cmdSetup separator Aperture OHMF
@@ -1247,8 +1232,8 @@ On 1
 :format: D2
 :write: delay
 :emptyvalue: -1
-:tip: <html>Specify a time interval that is inserted between the trigger event and the first sample event.<br>Valid range is 0 - 2 seconds. Specifying 0 sets the delay to its minimum possible value.<br>Set with empty input field returns delay to the automatic (default) delay.
-sec 0 2
+:tip: <html>Specify a time interval that is inserted between the trigger event and the first sample event.<br>Valid range is 0 - 6000 seconds. Specifying 0 sets the delay to its minimum possible value.<br>Set with empty input field returns delay to the automatic (default) delay.
+sec 0 6000
 :updatemodechange:
 
 
@@ -1273,24 +1258,13 @@ sec 0 2
 #cmdSetup radio Trigger_Mode OHMF
 :read: trigMode?
 :write: trigMode #
-:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering<br>EXT: external trigger input (BNC, rear panel)
 SYN SYN
 LINE LINE
 AUTO AUTO
+EXT EXT
 :updatemodechange:
 
-#cmdSetup separator AutoCal OHMF
-2 100 Raised
-
-
-#cmdSetup combobox AutoCal OHMF
-:buttontext: Run ACAL
-:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
-:write: acal #
-ALL  ALL
-DCV  DCV
-AC   AC
-OHMS OHMS
 
 
 #cmdSetup infoAsk 3458A_Temperature OHMF
@@ -1316,7 +1290,7 @@ Manual 0
 :read: range?
 :updatedelayed: 0.05
 :update: Range_Auto DCI, _ DCI
-0.1uA 0.1E-6
+100nA 0.1E-6
 1uA 1E-6
 10uA 10E-6
 100uA 100E-6
@@ -1355,7 +1329,7 @@ Manual 0
 :write: nplc
 :update: Aperture DCI
 :tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
-NPLC 0.5 1000
+NPLC 0 1000
 :updatemodechange:
 
 #cmdSetup separator NPLC DCI
@@ -1380,7 +1354,7 @@ NPLC 0.5 1000
 :write: aper
 :update: NPLC DCI
 :tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
-sec 0.01 1
+sec 0.0000005 1
 :updatemodechange:
 
 #cmdSetup separator Aperture DCI
@@ -1428,24 +1402,13 @@ dB 4
 #cmdSetup radio Trigger_Mode DCI
 :read: trigMode?
 :write: trigMode #
-:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering<br>EXT: external trigger input (BNC, rear panel)
 SYN SYN
 LINE LINE
 AUTO AUTO
+EXT EXT
 :updatemodechange:
 
-#cmdSetup separator AutoCal DCI
-2 100 Raised
-
-
-#cmdSetup combobox AutoCal DCI
-:buttontext: Run ACAL
-:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
-:write: acal #
-ALL  ALL
-DCV  DCV
-AC   AC
-OHMS OHMS
 
 
 #cmdSetup infoAsk 3458A_Temperature DCI
@@ -1460,7 +1423,7 @@ degr.C
 :read: autoRange?
 :write: autoRange #;[50]
 :updatedelayed: 0.05
-:update: Range ACI
+:update: _ ACI, Range ACI
 :tip: <html>Manual ranging is faster because in auto range mode,<br>the multimeter samples the input signal before each reading
 Auto 1
 Manual 0
@@ -1470,9 +1433,18 @@ Manual 0
 :write: range #;[50]
 :read: range?
 :updatedelayed: 0.05
-:update: Range_Auto ACI
+:update: Range_Auto ACI, _ ACI
+1uA 1E-6
+10uA 10E-6
 100uA 100E-6
 1mA 1E-3
+:updatemodechange:
+
+#cmdSetup radio _ ACI
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range_Auto ACI, Range ACI
 10mA 10E-3
 100mA 100E-3
 1A 1
@@ -1500,7 +1472,7 @@ Manual 0
 :write: nplc
 :update: Aperture ACI
 :tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
-NPLC 0.5 1000
+NPLC 0 1000
 :updatemodechange:
 
 #cmdSetup separator NPLC ACI
@@ -1525,7 +1497,7 @@ NPLC 0.5 1000
 :write: aper
 :update: NPLC ACI
 :tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
-sec 0.01 1
+sec 0.0000005 1
 :updatemodechange:
 
 #cmdSetup separator Aperture ACI
@@ -1563,24 +1535,13 @@ dB 4
 #cmdSetup radio Trigger_Mode ACI
 :read: trigMode?
 :write: trigMode #
-:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering<br>EXT: external trigger input (BNC, rear panel)
 SYN SYN
 LINE LINE
 AUTO AUTO
+EXT EXT
 :updatemodechange:
 
-#cmdSetup separator AutoCal ACI
-2 100 Raised
-
-
-#cmdSetup combobox AutoCal ACI
-:buttontext: Run ACAL
-:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
-:write: acal #
-ALL  ALL
-DCV  DCV
-AC   AC
-OHMS OHMS
 
 
 #cmdSetup infoAsk 3458A_Temperature ACI
@@ -1595,7 +1556,7 @@ degr.C
 :read: autoRange?
 :write: autoRange #;[50]
 :updatedelayed: 0.05
-:update: Range ACDCI
+:update: _ ACDCI, Range ACDCI
 :tip: <html>Manual ranging is faster because in auto range mode,<br>the multimeter samples the input signal before each reading
 Auto 1
 Manual 0
@@ -1605,9 +1566,18 @@ Manual 0
 :write: range #;[50]
 :read: range?
 :updatedelayed: 0.05
-:update: Range_Auto ACDCI
+:update: Range_Auto ACDCI, _ ACDCI
+1uA 1E-6
+10uA 10E-6
 100uA 100E-6
 1mA 1E-3
+:updatemodechange:
+
+#cmdSetup radio _ ACDCI
+:write: range #;[50]
+:read: range?
+:updatedelayed: 0.05
+:update: Range_Auto ACDCI, Range ACDCI
 10mA 10E-3
 100mA 100E-3
 1A 1
@@ -1635,7 +1605,7 @@ Manual 0
 :write: nplc
 :update: Aperture ACDCI
 :tip: <html>Number of Power Line Cycles. Specifies the A/D converter's<br>integration time in terms of power line cycles.
-NPLC 0.5 1000
+NPLC 0 1000
 :updatemodechange:
 
 #cmdSetup separator NPLC ACDCI
@@ -1660,7 +1630,7 @@ NPLC 0.5 1000
 :write: aper
 :update: NPLC ACDCI
 :tip: <html>Aperture Specifies the A/D converter's integration time and overrides any previously specified integration time or resolution.<br>The valid range for aperture is 0 - 1s in increments of 100ns.
-sec 0.01 1
+sec 0.0000005 1
 :updatemodechange:
 
 #cmdSetup separator Aperture ACDCI
@@ -1698,24 +1668,13 @@ dB 4
 #cmdSetup radio Trigger_Mode ACDCI
 :read: trigMode?
 :write: trigMode #
-:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering
+:tip: <html>Trigger event source.<br>SYN: triggers on GPIB read (normal mode)<br>LINE: sync to power line zero crossing (50/60Hz noise reduction)<br>AUTO: continuous automatic triggering<br>EXT: external trigger input (BNC, rear panel)
 SYN SYN
 LINE LINE
 AUTO AUTO
+EXT EXT
 :updatemodechange:
 
-#cmdSetup separator AutoCal ACDCI
-2 100 Raised
-
-
-#cmdSetup combobox AutoCal ACDCI
-:buttontext: Run ACAL
-:tip: <html>AutoCal takes 2-16 minutes. Do NOT disconnect or reset during AutoCal!<br>ALL: ~16 min | DCV: ~3 min | AC: ~3 min | OHMS: ~11 min
-:write: acal #
-ALL  ALL
-DCV  DCV
-AC   AC
-OHMS OHMS
 
 
 #cmdSetup infoAsk 3458A_Temperature ACDCI
